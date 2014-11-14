@@ -68,6 +68,11 @@ ss_redir_SOURCES = utils.c \
 ss_redir_LDADD = $(SS_COMMON_LIBS)
 endif
 
+bin_PROGRAMS += ss-test
+ss_test_SOURCES = \
+                   testsock.c
+ss_test_LDADD = $(SS_COMMON_LIBS)
+
 lib_LTLIBRARIES = libshadowsocks.la
 libshadowsocks_la_SOURCES = $(ss_local_SOURCES)
 libshadowsocks_la_CFLAGS = $(ss_local_CFLAGS) -DLIB_ONLY
