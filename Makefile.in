@@ -54,9 +54,8 @@ subdir = .
 DIST_COMMON = $(srcdir)/Makefile.in $(srcdir)/Makefile.am \
 	$(top_srcdir)/configure $(am__configure_deps) \
 	$(srcdir)/config.h.in $(srcdir)/shadowsocks.pc.in COPYING \
-	INSTALL auto/ar-lib auto/compile config.guess \
-	auto/config.guess config.sub auto/config.sub depcomp \
-	auto/depcomp install-sh auto/install-sh auto/missing \
+	INSTALL auto/ar-lib auto/compile auto/config.guess \
+	auto/config.sub auto/depcomp auto/install-sh auto/missing \
 	auto/ltmain.sh $(top_srcdir)/auto/ar-lib \
 	$(top_srcdir)/auto/compile $(top_srcdir)/auto/config.guess \
 	$(top_srcdir)/auto/config.sub $(top_srcdir)/auto/install-sh \

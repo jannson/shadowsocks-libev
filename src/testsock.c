@@ -28,6 +28,8 @@ char* line = NULL;
 size_t len = 0;
 char** g_grgv = NULL;
 
+int setCloExec( int fd, int val );
+
 #define HTTP_C_MAGIC        0x10293874
 #define HTTP_C_VERSION      0x1
 #define HTTP_C_REQ          0x1
@@ -151,6 +153,20 @@ int setnonblock(int fd)
     return fcntl(fd, F_SETFL, flags);
 }
 
+int setCloExec( int fd, int val )
+{
+   unsigned int flags = fcntl( fd, F_GETFD );
+   if ( flags == -1 ) return 0;
+ 
+   if ( val )
+   {
+      if ( fcntl( fd, F_SETFD, flags |  FD_CLOEXEC ) == -1 ) return 0;
+   } else {
+      if ( fcntl( fd, F_SETFD, flags & ~FD_CLOEXEC ) == -1 ) return 0;
+   }
+ 
+   return 1;
+}
 static void connection_new(EV_P_ char* sock_path) {
     int len;
     struct sockaddr_un remote;
@@ -165,6 +181,8 @@ static void connection_new(EV_P_ char* sock_path) {
         perror("echo client socket nonblock");
         exit(EXIT_FAILURE);
     }
+
+    setCloExec(remote_fd, 1);
 
     // this should be initialized before the connect() so
     // that no packets are dropped when initially sent?
@@ -206,15 +224,16 @@ void releaseLock (int lockFd) {
     close (lockFd);
 }
 
-void restart_process(char **args)
+void restart_process(char **args, int lockFd)
 {
+#if 0
     int childpid;
 
-    childpid = fork ();
+    childpid = vfork ();
     if (childpid < 0) {
         perror ("fork failed");
     } else if (childpid  == 0) {
-        printf ("new process %d", getpid());
+        //printf ("new process %d", getpid());
         int rv = execve (args[0], args, NULL);
         if (rv == -1) {
             perror ("execve");
@@ -222,10 +241,14 @@ void restart_process(char **args)
         }
 
     } else {
-        sleep (5);
-        printf ("killing %d\n", getpid());
-        kill (getpid (), SIGTERM);
+        releaseLock(lockFd);
+        //sleep (5);
+        //printf ("killing %d\n", getpid());
+        //kill (getpid (), SIGTERM);
     }
+#endif
+    releaseLock(lockFd);
+    execve(args[0], args, NULL);
 }
 
 void daemonize(const char* path)
@@ -285,9 +308,9 @@ int main (int argc, char **argv)
     char *pid_path = "/tmp/ss-test.pid";
 
     int fd = acquireLock(pid_path);
-    if(fd < 0) {
+    while(fd < 0) {
         fprintf(stderr, "locked\n");
-        return 1;
+        fd = acquireLock(pid_path);
     }
 
     //daemonize(pid_path);
@@ -303,7 +326,7 @@ int main (int argc, char **argv)
     // now wait for events to arrive
     ev_loop(EV_A_ 0);
 
-    restart_process(argv);
+    restart_process(argv, fd);
 
     // unloop was called, so exit
     return 0;
