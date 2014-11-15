@@ -38,6 +38,8 @@
 #include <unistd.h>
 #include <limits.h>
 #include <linux/if.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #include <linux/netfilter_ipv4.h>
 #include <linux/netfilter_ipv6/ip6_tables.h>
 
@@ -63,6 +65,14 @@
 #ifndef IP6T_SO_ORIGINAL_DST
 #define IP6T_SO_ORIGINAL_DST 80
 #endif
+
+/* TODO make better hear */
+EV_P;
+ev_io conf_remote_w;
+ev_io conf_send_w;
+int conf_fd;
+#define CONF_BUF_LEN 2048
+char* conf_buf;
 
 int getdestaddr(int fd, struct sockaddr_storage *destaddr)
 {
@@ -699,7 +709,7 @@ static void accept_cb (EV_P_ ev_io *w, int revents)
     ev_timer_start(EV_A_ &remote->send_ctx->watcher);
 }
 
-int main (int argc, char **argv)
+int create_main(int argc, char **argv)
 {
 
     int i, c;
@@ -836,19 +846,238 @@ int main (int argc, char **argv)
     listen_ctx.fd = listenfd;
     listen_ctx.method = m;
 
-    struct ev_loop *loop = ev_default_loop(0);
+    ev_io_init (&listen_ctx.io, accept_cb, listenfd, EV_READ);
+    ev_io_start (loop, &listen_ctx.io);
+
+
+    return 0;
+}
+
+static void conf_remote_cb(EV_P_ ev_io *w, int revents)
+{
+    // Connected
+    ev_io_stop(EV_A_ &conf_send_w);
+    ev_io_set(&conf_send_w, conf_fd, EV_READ | EV_WRITE);
+    ev_io_start(EV_A_ &conf_send_w);
+
+    ev_io_stop(EV_A_ &conf_remote_w);
+}
+
+unsigned int hash(unsigned int x)
+{
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x);
+    return x;
+    //hash(i)=i*2654435761 mod 2^32
+}
+
+void generate_key(uint32_t* k)
+{
+    int i = 3, n = 60;
+    time_t t;
+    
+    time(&t);
+    k[i] = (uint32_t)t;
+    k[i] = (k[i]+n-1) / n;
+    k[i] = hash(k[i]);
+}
+
+void encry (uint32_t* v, uint32_t* k) 
+{
+    uint32_t v0=v[0], v1=v[1], sum=0, i;           /* set up */
+    uint32_t delta=0x9e3779b9;                     /* a key schedule constant */
+    uint32_t k0=k[0], k1=k[1], k2=k[2], k3=k[3];   /* cache key */
+    for (i=0; i < 32; i++) {                       /* basic cycle start */
+        sum += delta;
+        v0 += ((v1<<4) + k0) ^ (v1 + sum) ^ ((v1>>5) + k1);
+        v1 += ((v0<<4) + k2) ^ (v0 + sum) ^ ((v0>>5) + k3);
+    }                                              /* end cycle */
+    v[0]=v0; v[1]=v1;
+}
+ 
+void decry (uint32_t* v, uint32_t* k) {
+    uint32_t v0=v[0], v1=v[1], sum=0xC6EF3720, i;  /* set up */
+    uint32_t delta=0x9e3779b9;                     /* a key schedule constant */
+    uint32_t k0=k[0], k1=k[1], k2=k[2], k3=k[3];   /* cache key */
+    for (i=0; i<32; i++) {                         /* basic cycle start */
+        v1 -= ((v0<<4) + k2) ^ (v0 + sum) ^ ((v0>>5) + k3);
+        v0 -= ((v1<<4) + k0) ^ (v1 + sum) ^ ((v1>>5) + k1);
+        sum -= delta;
+    }                                              /* end cycle */
+    v[0]=v0; v[1]=v1;
+}
+
+void conf_req(char* buf, int* req_len)
+{
+    int i = 0;
+    uint16_t total_len = 64;
+    uint32_t k[] = {0x53726438, 0x89742910, 0x47492018, 0x0};
+    static uint16_t seq = 12;
+
+    *((uint32_t*)&buf[i]) = htonl(0x10293874);
+    i += 4;
+    *((uint16_t*)&buf[i]) = htons(1);
+    i += 2;
+    *((uint16_t*)&buf[i]) = htons(1);
+    i += 2;
+    *((uint16_t*)&buf[i]) = htons(total_len);
+    i += 2;
+    seq = (seq+1) & 0xFF;
+    *((uint16_t*)&buf[i]) = htons(seq);
+    i += 2;
+    *((uint32_t*)&buf[i]) = htonl(0);
+    i += 4;
+    *((uint32_t*)&buf[i]) = htonl(0x88999966);
+    i += 4;
+    
+    srand(time(NULL));
+    for(; i < 64/4; i++) 
+    {
+        *((uint32_t*)&buf[i]) = htonl(rand());
+        i += 4;
+    }
+
+    generate_key(k);
+    fprintf(stderr, "k3 = %d\n", k[3]);
+    for(i = 0; i < total_len/8; i++) {
+        encry((uint32_t*)buf+i*2, k);
+    }
+
+    *req_len = total_len;
+}
+
+int conf_parse(char* buf, int len)
+{
+    int i;
+    uint16_t pkg_len;
+    uint32_t evt_type;
+    uint32_t k[] = {0x53726438, 0x89742910, 0x47492018, 0x0};
+    generate_key(k);
+
+    for(i = 0; i < len/8; i++) {
+        decry((uint32_t*)buf+i*2, k);
+    }
+
+    i = 0;
+    if( (*((uint32_t*)&buf[i]) != htonl(0x10293874))
+           || (*((uint16_t*)&buf[i+4]) != htons(1)) ) {
+        fprintf(stderr, "magic or type error\n");
+        return -1;
+    }
+
+    i = 8;
+    pkg_len = *((uint16_t*)(&buf[i]));
+    pkg_len = htons(pkg_len);
+    if(pkg_len > len) {
+        fprintf(stderr, "pkg_len error\n");
+        return -1;
+    }
+
+    i = 16;
+    evt_type = *((uint32_t*)(&buf[i]));
+    evt_type = htonl(evt_type);
+    if(0x88999988 == evt_type) {
+        ev_break (EV_A_ EVBREAK_ALL);
+        return 0;
+    }
+    else if(evt_type > (CONF_BUF_LEN-60)) {
+        fprintf(stderr, "evt type error\n");
+        return -1;
+    } else {
+        //Parse conf
+        buf[evt_type+16] = '\0';
+        fprintf(stderr, "the conf is = %s\n", buf+20);
+        return 0;
+    }
+}
+
+static void conf_send_cb(EV_P_ ev_io *w, int revents)
+{
+    int n, req_len;
+
+    if (revents & EV_WRITE)
+    {
+        conf_req(conf_buf, &req_len);
+        if (-1 == send(conf_fd, conf_buf, req_len, 0)) {
+            perror("echo send");
+            exit(EXIT_FAILURE);
+        }
+        // once the data is sent, stop notifications that
+        // data can be sent until there is actually more
+        // data to send
+        ev_io_stop(EV_A_ &conf_send_w);
+        ev_io_set(&conf_send_w, conf_fd, EV_READ);
+        ev_io_start(EV_A_ &conf_send_w);
+    }
+    else if (revents & EV_READ)
+    {
+        n = recv(conf_fd, conf_buf, 2000, 0);
+        if (n <= 0) {
+            if (0 == n) {
+                perror("orderly disconnect");
+                ev_io_stop(EV_A_ &conf_send_w);
+                close(conf_fd);
+            }  else if (EAGAIN == errno) {
+                perror("should never get in this state with libev");
+            } else {
+                perror("recv");
+            }
+            return;
+        }
+
+        conf_parse(conf_buf, n);
+    }
+}
+
+static int conf_connect(EV_P_ char* sock_path)
+{
+    int len, remote_fd;
+    struct sockaddr_un remote;
+
+    if (-1 == (remote_fd = socket(AF_UNIX, SOCK_STREAM, 0))) {
+        perror("socket created failed\n");
+        exit(1);
+    }
+
+    // Set it non-blocking
+    if (-1 == setnonblocking(remote_fd)) {
+        perror("nonblocking error\n");
+        exit(EXIT_FAILURE);
+    }
+
+    ev_io_init (&conf_remote_w, conf_remote_cb, remote_fd, EV_WRITE);
+    ev_io_start(EV_A_ &conf_remote_w);
+
+    // initialize the send callback, but wait to start until there is data to write
+    ev_io_init(&conf_send_w, conf_send_cb, remote_fd, EV_READ);
+    ev_io_start(EV_A_ &conf_send_w);
+
+    remote.sun_family = AF_UNIX;
+    strcpy(remote.sun_path, sock_path);
+    len = strlen(remote.sun_path) + sizeof(remote.sun_family);
+
+    if (-1 == connect(remote_fd, (struct sockaddr *)&remote, len)) {
+        perror("connect");
+        exit(1);
+    }
+
+    return remote_fd;
+}
+
+int main (int argc, char **argv)
+{
+    loop = EV_DEFAULT;
     if (!loop)
     {
         FATAL("ev_loop error.");
     }
-    ev_io_init (&listen_ctx.io, accept_cb, listenfd, EV_READ);
-    ev_io_start (loop, &listen_ctx.io);
 
-    // setuid
-    if (user != NULL)
-        run_as(user);
+    conf_buf = (char*)malloc(CONF_BUF_LEN);
 
-    ev_run (loop, 0);
+    conf_fd = conf_connect(EV_A_ "/tmp/ss-mgmt.sock");
+
+    ev_loop(EV_A_ 0);
 
     return 0;
 }

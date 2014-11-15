@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -12,6 +13,7 @@
 #include <sys/file.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <time.h>
 #include <ev.h>
 
 // TODO
@@ -137,8 +139,13 @@ static void remote_cb (EV_P_ ev_io *w, int revents)
 {
     puts ("connected, now watching stdin");
     // Once the connection is established, listen to stdin
-    ev_io_start(EV_A_ &stdin_watcher);
+    //ev_io_start(EV_A_ &stdin_watcher);
     // Once we're connected, that's the end of that
+
+    ev_io_stop(EV_A_ &send_w);
+    ev_io_set (&send_w, remote_fd, EV_READ | EV_WRITE);
+    ev_io_start(EV_A_ &send_w);
+
     ev_io_stop(EV_A_ &remote_w);
 }
 
@@ -182,7 +189,7 @@ static void connection_new(EV_P_ char* sock_path) {
         exit(EXIT_FAILURE);
     }
 
-    setCloExec(remote_fd, 1);
+    //setCloExec(remote_fd, 1);
 
     // this should be initialized before the connect() so
     // that no packets are dropped when initially sent?
@@ -303,8 +310,71 @@ void daemonize(const char* path)
 #endif
 }
 
+//http://stackoverflow.com/questions/664014/what-integer-hash-function-are-good-that-accepts-an-integer-hash-key
+unsigned int hash(unsigned int x) {
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x);
+    return x;
+    //hash(i)=i*2654435761 mod 2^32
+}
+ 
+//http://en.wikipedia.org/wiki/Tiny_Encryption_Algorithm
+void encry (uint32_t* v, uint32_t* k) {
+    uint32_t v0=v[0], v1=v[1], sum=0, i;           /* set up */
+    uint32_t delta=0x9e3779b9;                     /* a key schedule constant */
+    uint32_t k0=k[0], k1=k[1], k2=k[2], k3=k[3];   /* cache key */
+    for (i=0; i < 32; i++) {                       /* basic cycle start */
+        sum += delta;
+        v0 += ((v1<<4) + k0) ^ (v1 + sum) ^ ((v1>>5) + k1);
+        v1 += ((v0<<4) + k2) ^ (v0 + sum) ^ ((v0>>5) + k3);
+    }                                              /* end cycle */
+    v[0]=v0; v[1]=v1;
+}
+ 
+void decry (uint32_t* v, uint32_t* k) {
+    uint32_t v0=v[0], v1=v[1], sum=0xC6EF3720, i;  /* set up */
+    uint32_t delta=0x9e3779b9;                     /* a key schedule constant */
+    uint32_t k0=k[0], k1=k[1], k2=k[2], k3=k[3];   /* cache key */
+    for (i=0; i<32; i++) {                         /* basic cycle start */
+        v1 -= ((v0<<4) + k2) ^ (v0 + sum) ^ ((v0>>5) + k3);
+        v0 -= ((v1<<4) + k0) ^ (v1 + sum) ^ ((v1>>5) + k1);
+        sum -= delta;
+    }                                              /* end cycle */
+    v[0]=v0; v[1]=v1;
+}
+
+void generate_key(uint32_t* k)
+{
+    int i = 3, n = 16;
+    time_t t;
+    
+    time(&t);
+    k[i] = (uint32_t)t;
+    k[i] = (k[i]+n-1) / n;
+    k[i] = hash(k[i]);
+}
+
+void en_test() {
+    uint32_t v[] = {0x12345678, 0x98765432};
+    uint32_t k[] = {0x53726438, 0x89742910, 0x47492018, 0x0};
+
+    generate_key(k);
+    fprintf(stderr, "first v0=%x v1=%x k3=%x\n", v[0], v[1], k[3]);
+
+    encry(v, k);
+    sleep(2);
+    generate_key(k);
+    fprintf(stderr, "second v0=%x v1=%x k3=%x\n", v[0], v[1], k[3]);
+
+    decry(v, k);
+    fprintf(stderr, "third v0=%x v1=%x\n", v[0], v[1]);
+
+}
+
 int main (int argc, char **argv)
 {
+#if 0
     char *pid_path = "/tmp/ss-test.pid";
 
     int fd = acquireLock(pid_path);
@@ -312,8 +382,10 @@ int main (int argc, char **argv)
         fprintf(stderr, "locked\n");
         fd = acquireLock(pid_path);
     }
+#endif
 
     //daemonize(pid_path);
+    en_test();
 
     loop = EV_DEFAULT;
     // initialise an io watcher, then start it
@@ -326,7 +398,7 @@ int main (int argc, char **argv)
     // now wait for events to arrive
     ev_loop(EV_A_ 0);
 
-    restart_process(argv, fd);
+    //restart_process(argv, fd);
 
     // unloop was called, so exit
     return 0;
