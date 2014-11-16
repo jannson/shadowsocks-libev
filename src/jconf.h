@@ -44,7 +44,8 @@ typedef struct {
     int nofile;
 } jconf_t;
 
-jconf_t *read_jconf(const char * file);
+jconf_t *read_jconf(const char* file);
+jconf_t *read_jconf_buf(const char* buf, long pos);
 void parse_addr(const char *str, ss_addr_t *addr);
 void free_addr(ss_addr_t *addr);
 
