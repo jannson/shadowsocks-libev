@@ -88,18 +88,6 @@ jconf_t *read_jconf_buf(char* buf, long pos)
 
     json_value *obj;
 
-    buf = malloc(pos + 1);
-    if (buf == NULL) {
-        FATAL("No enough memory.");
-    }
-
-    int nread = fread(buf, pos, 1, f);
-    if (!nread) {
-        FATAL("Failed to read the config file.");
-    }
-
-    buf[pos] = '\0'; // end of string
-
     json_settings settings = { 0 };
     char error_buf[512];
     obj = json_parse_ex(&settings, buf, pos, error_buf);
