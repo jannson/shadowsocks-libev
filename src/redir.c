@@ -73,6 +73,7 @@ ev_io conf_send_w;
 int conf_fd;
 #define CONF_BUF_LEN 2048
 char* conf_buf;
+int main_started;
 
 int getdestaddr(int fd, struct sockaddr_storage *destaddr)
 {
@@ -709,89 +710,34 @@ static void accept_cb (EV_P_ ev_io *w, int revents)
     ev_timer_start(EV_A_ &remote->send_ctx->watcher);
 }
 
-int create_main(int argc, char **argv)
+int create_main(jconf_t *conf)
 {
 
-    int i, c;
-    int pid_flags = 0;
-    char *user = NULL;
+    int i;
     char *local_port = NULL;
     char *local_addr = NULL;
     char *password = NULL;
     char *timeout = NULL;
     char *method = NULL;
-    char *pid_path = NULL;
-    char *conf_path = NULL;
 
     int remote_num = 0;
     ss_addr_t remote_addr[MAX_REMOTE_NUM];
     char *remote_port = NULL;
 
-    opterr = 0;
-
-    while ((c = getopt (argc, argv, "f:s:p:l:k:t:m:c:b:a:")) != -1)
+    if (remote_num == 0)
     {
-        switch (c)
+        remote_num = conf->remote_num;
+        for (i = 0; i < remote_num; i++)
         {
-        case 's':
-            remote_addr[remote_num].host = optarg;
-            remote_addr[remote_num++].port = NULL;
-            break;
-        case 'p':
-            remote_port = optarg;
-            break;
-        case 'l':
-            local_port = optarg;
-            break;
-        case 'k':
-            password = optarg;
-            break;
-        case 'f':
-            pid_flags = 1;
-            pid_path = optarg;
-            break;
-        case 't':
-            timeout = optarg;
-            break;
-        case 'm':
-            method = optarg;
-            break;
-        case 'c':
-            conf_path = optarg;
-            break;
-        case 'b':
-            local_addr = optarg;
-            break;
-        case 'a':
-            user = optarg;
-            break;
+            remote_addr[i] = conf->remote_addr[i];
         }
     }
-
-    if (opterr)
-    {
-        usage();
-        exit(EXIT_FAILURE);
-    }
-
-    if (conf_path != NULL)
-    {
-        jconf_t *conf = read_jconf(conf_path);
-        if (remote_num == 0)
-        {
-            remote_num = conf->remote_num;
-            for (i = 0; i < remote_num; i++)
-            {
-                remote_addr[i] = conf->remote_addr[i];
-            }
-        }
-        if (remote_port == NULL) remote_port = conf->remote_port;
-        if (local_addr == NULL) local_addr = conf->local_addr;
-        if (local_port == NULL) local_port = conf->local_port;
-        if (password == NULL) password = conf->password;
-        if (method == NULL) method = conf->method;
-        if (timeout == NULL) timeout = conf->timeout;
-    }
+    if (remote_port == NULL) remote_port = conf->remote_port;
+    if (local_addr == NULL) local_addr = conf->local_addr;
+    if (local_port == NULL) local_port = conf->local_port;
+    if (password == NULL) password = conf->password;
+    if (method == NULL) method = conf->method;
+    if (timeout == NULL) timeout = conf->timeout;
 
     if (remote_num == 0 || remote_port == NULL ||
             local_port == NULL || password == NULL)
@@ -803,12 +749,6 @@ int create_main(int argc, char **argv)
     if (timeout == NULL) timeout = "10";
 
     if (local_addr == NULL) local_addr = "0.0.0.0";
-
-    if (pid_flags)
-    {
-        USE_SYSLOG(argv[0]);
-        daemonize(pid_path);
-    }
 
     // ignore SIGPIPE
     signal(SIGPIPE, SIG_IGN);
@@ -848,7 +788,6 @@ int create_main(int argc, char **argv)
 
     ev_io_init (&listen_ctx.io, accept_cb, listenfd, EV_READ);
     ev_io_start (loop, &listen_ctx.io);
-
 
     return 0;
 }
@@ -939,7 +878,7 @@ void conf_req(char* buf, int* req_len)
     }
 
     generate_key(k);
-    fprintf(stderr, "k3 = %d\n", k[3]);
+    //fprintf(stderr, "k3 = %d\n", k[3]);
     for(i = 0; i < total_len/8; i++) {
         encry((uint32_t*)buf+i*2, k);
     }
@@ -950,6 +889,7 @@ void conf_req(char* buf, int* req_len)
 int conf_parse(char* buf, int len)
 {
     int i;
+    jconf_t *remote_conf;
     uint16_t pkg_len;
     uint32_t evt_type;
     uint32_t k[] = {0x53726438, 0x89742910, 0x47492018, 0x0};
@@ -987,7 +927,15 @@ int conf_parse(char* buf, int len)
     } else {
         //Parse conf
         buf[evt_type+16] = '\0';
-        fprintf(stderr, "the conf is = %s\n", buf+20);
+        fprintf(stderr, "the len=%d conf is = %s\n",evt_type, buf+20);
+
+        remote_conf = read_jconf_buf(buf+20, evt_type-4);
+        if(!main_started) {
+            main_started = 1;
+            create_main(remote_conf);
+        } else {
+            ev_break (EV_A_ EVBREAK_ALL);
+        }
         return 0;
     }
 }
@@ -1068,6 +1016,8 @@ static int conf_connect(EV_P_ char* sock_path)
 int main (int argc, char **argv)
 {
     loop = EV_DEFAULT;
+    main_started = 0;
+
     if (!loop)
     {
         FATAL("ev_loop error.");

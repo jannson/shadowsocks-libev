@@ -94,31 +94,11 @@ void parse_addr(const char *str, ss_addr_t *addr)
     }
 }
 
-jconf_t *read_jconf(const char* file)
+jconf_t *read_jconf_buf(const char* buf, long pos)
 {
-
     static jconf_t conf;
 
-    char *buf;
     json_value *obj;
-
-    FILE *f = fopen(file, "rb");
-    if (f == NULL) FATAL("Invalid config path.");
-
-    fseek(f, 0, SEEK_END);
-    long pos = ftell(f);
-    fseek(f, 0, SEEK_SET);
-
-    if (pos >= MAX_CONF_SIZE) FATAL("Too large config file.");
-
-    buf = malloc(pos + 1);
-    if (buf == NULL) FATAL("No enough memory.");
-
-    int nread = fread(buf, pos, 1, f);
-    if (!nread) FATAL("Failed to read the config file.");
-    fclose(f);
-
-    buf[pos] = '\0'; // end of string
 
     json_settings settings = { 0 };
     char error_buf[512];
@@ -194,8 +174,34 @@ jconf_t *read_jconf(const char* file)
         FATAL("Invalid config file");
     }
 
-    free(buf);
     json_value_free(obj);
     return &conf;
+}
 
+jconf_t *read_jconf(const char* file)
+{
+    jconf_t* conf = NULL;
+    char *buf = NULL;
+
+    FILE *f = fopen(file, "rb");
+    if (f == NULL) FATAL("Invalid config path.");
+
+    fseek(f, 0, SEEK_END);
+    long pos = ftell(f);
+    fseek(f, 0, SEEK_SET);
+
+    if (pos >= MAX_CONF_SIZE) FATAL("Too large config file.");
+
+    buf = malloc(pos + 1);
+    if (buf == NULL) FATAL("No enough memory.");
+
+    int nread = fread(buf, pos, 1, f);
+    if (!nread) FATAL("Failed to read the config file.");
+    fclose(f);
+
+    buf[pos] = '\0'; // end of string
+    conf = read_jconf_buf(buf, pos);
+    free(buf);
+
+    return conf;
 }
