@@ -2,7 +2,7 @@
 
 while true
 do
-  ./src/ss-test &
+  /usr/bin/ss-redir &
   PID=$!
   wait $PID
   echo $?
