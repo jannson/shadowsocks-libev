@@ -74,6 +74,7 @@ int conf_fd;
 #define CONF_BUF_LEN 2048
 char* conf_buf;
 int main_started;
+int errcode;
 
 int getdestaddr(int fd, struct sockaddr_storage *destaddr)
 {
@@ -918,6 +919,12 @@ int conf_parse(char* buf, int len)
     evt_type = *((uint32_t*)(&buf[i]));
     evt_type = htonl(evt_type);
     if(0x88999988 == evt_type) {
+        errcode = 1;    /* Restart */
+        ev_break (EV_A_ EVBREAK_ALL);
+        return 0;
+    }
+    else if(0x88999998 == evt_type) {
+        errcode = 2; /* AU FAILED */
         ev_break (EV_A_ EVBREAK_ALL);
         return 0;
     }
@@ -934,6 +941,7 @@ int conf_parse(char* buf, int len)
             main_started = 1;
             create_main(remote_conf);
         } else {
+            errcode = 3;    /* Conf changed */
             ev_break (EV_A_ EVBREAK_ALL);
         }
         return 0;
@@ -1017,6 +1025,7 @@ int main (int argc, char **argv)
 {
     loop = EV_DEFAULT;
     main_started = 0;
+    errcode = 0;
 
     if (!loop)
     {
@@ -1029,6 +1038,6 @@ int main (int argc, char **argv)
 
     ev_loop(EV_A_ 0);
 
-    return 0;
+    return errcode;
 }
 
