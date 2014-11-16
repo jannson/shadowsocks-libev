@@ -66,7 +66,8 @@
 #endif
 
 /* TODO make better hear */
-EV_P;
+struct ev_loop* loop;
+struct listen_ctx listen_ctx;
 ev_io conf_remote_w;
 ev_io conf_send_w;
 int conf_fd;
@@ -684,6 +685,9 @@ int create_main(jconf_t *conf)
 
     if (local_addr == NULL) local_addr = "0.0.0.0";
 
+    //fprintf(stderr, "%s %s %s %s %s %s\n"
+    //        , remote_addr[0].host, remote_port, local_addr, local_port, password, method);
+
     // ignore SIGPIPE
     signal(SIGPIPE, SIG_IGN);
     signal(SIGABRT, SIG_IGN);
@@ -707,7 +711,6 @@ int create_main(jconf_t *conf)
     LOGD("server listening at port %s.", local_port);
 
     // Setup proxy context
-    struct listen_ctx listen_ctx;
     listen_ctx.remote_num = remote_num;
     listen_ctx.remote_addr = malloc(sizeof(ss_addr_t) * remote_num);
     while (remote_num > 0)
@@ -867,7 +870,7 @@ int conf_parse(char* buf, int len)
     } else {
         //Parse conf
         buf[evt_type+16] = '\0';
-        //fprintf(stderr, "the len=%d conf is = %s\n",evt_type, buf+20);
+        //fprintf(stderr, "the len=%d conf is = %s\n", evt_type-4, buf+20);
 
         remote_conf = read_jconf_buf(buf+20, evt_type-4);
         if(!main_started) {
@@ -969,7 +972,7 @@ int main (int argc, char **argv)
 
     conf_fd = conf_connect(EV_A_ "/tmp/ss-mgmt.sock");
 
-    ev_loop(EV_A_ 0);
+    ev_loop(loop, 0);
 
     return errcode;
 }
