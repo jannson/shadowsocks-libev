@@ -790,15 +790,18 @@ void conf_req(char* buf, int* req_len)
 
     *((uint32_t*)&buf[i]) = htonl(0x10293874);
     i += 4;
-    *((uint16_t*)&buf[i]) = htons(1);
-    i += 2;
-    *((uint16_t*)&buf[i]) = htons(1);
-    i += 2;
-    *((uint16_t*)&buf[i]) = htons(total_len);
-    i += 2;
+    buf[i] = 1;
+    i += 1;
+    buf[i] = 1;
+    i += 1;
+
     seq = (seq+1) & 0xFF;
     *((uint16_t*)&buf[i]) = htons(seq);
     i += 2;
+
+    *((uint32_t*)&buf[i]) = htonl(total_len);
+    i += 4;
+
     *((uint32_t*)&buf[i]) = htonl(0);
     i += 4;
     *((uint32_t*)&buf[i]) = htonl(0x88999966);
@@ -824,7 +827,7 @@ int conf_parse(char* buf, int len)
 {
     int i;
     jconf_t *remote_conf;
-    uint16_t pkg_len;
+    uint32_t pkg_len;
     uint32_t evt_type;
     uint32_t k[] = {0x53726438, 0x89742910, 0x47492018, 0x0};
     generate_key(k);
@@ -835,14 +838,14 @@ int conf_parse(char* buf, int len)
 
     i = 0;
     if( (*((uint32_t*)&buf[i]) != htonl(0x10293874))
-           || (*((uint16_t*)&buf[i+4]) != htons(1)) ) {
-        fprintf(stderr, "magic or type error\n");
+           || (buf[i+4]) != 1 ) {
+        fprintf(stderr, "magic or version error\n");
         return -1;
     }
 
     i = 8;
-    pkg_len = *((uint16_t*)(&buf[i]));
-    pkg_len = htons(pkg_len);
+    pkg_len = *((uint32_t*)(&buf[i]));
+    pkg_len = htonl(pkg_len);
     if(pkg_len > len) {
         fprintf(stderr, "pkg_len error\n");
         return -1;
